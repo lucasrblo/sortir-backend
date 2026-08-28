@@ -308,7 +308,18 @@ app.get("/admin/import/predicthq", requireAdminKey, async (req, res) => {
 app.get("/admin/fetch-photos", requireAdminKey, async (req, res) => {
   try {
     const { runFetchPhotos } = require("../scripts/fetch-photos");
-    const result = await runFetchPhotos();
+    const force = req.query.force === "1";
+    const result = await runFetchPhotos(force);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/admin/import/paris-opendata", requireAdminKey, async (req, res) => {
+  try {
+    const { runImport } = require("../scripts/import-paris-opendata");
+    const result = await runImport();
     res.json({ ok: true, ...result });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });

@@ -14,7 +14,7 @@ const path = require("path");
 const Database = require("better-sqlite3");
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "db", "sortir.db");
-const PHOTOS_PER_CATEGORY = 8;
+const PHOTOS_PER_CATEGORY = 40; // Pexels autorise jusqu'à 80 par requête — on vise large pour éviter la répétition
 
 // Termes de recherche en anglais (l'index Pexels y est bien plus riche
 // qu'en français) choisis pour évoquer l'ambiance de chaque catégorie.
@@ -48,7 +48,7 @@ async function fetchCategoryPhotos(query, apiKey) {
   return (data.photos || []).map(p => p.src.large);
 }
 
-async function runFetchPhotos() {
+async function runFetchPhotos(force = false) {
   const apiKey = process.env.PEXELS_API_KEY;
   if (!apiKey) throw new Error("PEXELS_API_KEY manquant.");
 
@@ -57,9 +57,9 @@ async function runFetchPhotos() {
 
   try {
     for (const [categoryId, query] of Object.entries(CATEGORY_QUERY)) {
-      const events = db.prepare(
-        `SELECT id FROM events WHERE category_id = ? AND (cover_image_url IS NULL OR cover_image_url = '')`
-      ).all(categoryId);
+      const events = force
+        ? db.prepare(`SELECT id FROM events WHERE category_id = ?`).all(categoryId)
+        : db.prepare(`SELECT id FROM events WHERE category_id = ? AND (cover_image_url IS NULL OR cover_image_url = '')`).all(categoryId);
       if (events.length === 0) { results.categories[categoryId] = { photos: 0, updated: 0 }; continue; }
 
       let photos = [];
@@ -87,7 +87,8 @@ async function runFetchPhotos() {
 module.exports = { runFetchPhotos };
 
 if (require.main === module) {
-  runFetchPhotos()
+  const force = process.argv.includes("--force");
+  runFetchPhotos(force)
     .then(r => console.log(JSON.stringify(r, null, 2)))
     .catch(err => { console.error("❌", err.message); process.exit(1); });
 }
