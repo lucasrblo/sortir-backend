@@ -54,12 +54,26 @@ function parsePriceDetail(priceType, priceDetail) {
 }
 
 function upsertVenue(db, record) {
-  const lat = record.lat_lon?.lat;
-  const lng = record.lat_lon?.lon; // attention : l'API donne "lon", pas "lng"
+  let lat = record.lat_lon?.lat;
+  let lng = record.lat_lon?.lon; // attention : l'API donne "lon", pas "lng"
+
+  // Repli sur le tableau "locations" si les champs de premier niveau sont absents —
+  // certaines fiches ne renseignent l'adresse que là.
+  if ((typeof lat !== "number" || typeof lng !== "number" || (lat === 0 && lng === 0)) && Array.isArray(record.locations) && record.locations[0]) {
+    const loc = record.locations[0];
+    if (typeof loc.address_lat_lon === "string") {
+      const [latStr, lngStr] = loc.address_lat_lon.split(",").map(s => s.trim());
+      const parsedLat = parseFloat(latStr), parsedLng = parseFloat(lngStr);
+      if (!isNaN(parsedLat) && !isNaN(parsedLng) && !(parsedLat === 0 && parsedLng === 0)) {
+        lat = parsedLat; lng = parsedLng;
+      }
+    }
+  }
+
   if (typeof lat !== "number" || typeof lng !== "number" || (lat === 0 && lng === 0)) return null;
 
-  const name = record.address_name || "Lieu à Paris";
-  const city = record.address_city || "Paris";
+  const name = record.address_name || record.locations?.[0]?.address_name || "Lieu à Paris";
+  const city = record.address_city || record.locations?.[0]?.address_city || "Paris";
   const existing = db.prepare(`SELECT id FROM venues WHERE name = ? AND city = ?`).get(name, city);
   if (existing) return existing.id;
   const info = db.prepare(`INSERT INTO venues (name, city, lat, lng) VALUES (?, ?, ?, ?)`)
@@ -68,8 +82,9 @@ function upsertVenue(db, record) {
 }
 
 function upsertEvent(db, record, venueId) {
-  if (!venueId || !record.id) return "skipped";
-  if (!record.date_start) return "skipped"; // certaines fiches sont des offres permanentes sans date précise
+  if (!record.id) return "skipped_no_id";
+  if (!record.date_start) return "skipped_no_date";
+  if (!venueId) return "skipped_no_location";
 
   const existing = db.prepare(`SELECT id FROM events WHERE source = 'paris-opendata' AND external_id = ?`).get(String(record.id));
   if (existing) return "duplicate";
@@ -103,7 +118,8 @@ function upsertEvent(db, record, venueId) {
 
 async function runImport() {
   const db = new Database(DB_PATH);
-  let inserted = 0, duplicates = 0, skipped = 0;
+  let inserted = 0, duplicates = 0, totalCount = null, pagesRead = 0;
+  const skipReasons = { skipped_no_id: 0, skipped_no_date: 0, skipped_no_location: 0 };
 
   try {
     for (let page = 0; page < MAX_PAGES; page++) {
@@ -114,7 +130,9 @@ async function runImport() {
         throw new Error(`Paris Open Data a répondu ${res.status} : ${body.slice(0, 300)}`);
       }
       const data = await res.json();
+      if (totalCount === null) totalCount = data.total_count ?? null;
       const records = data.results || [];
+      pagesRead++;
       if (records.length === 0) break;
 
       for (const record of records) {
@@ -122,13 +140,14 @@ async function runImport() {
         const result = upsertEvent(db, record, venueId);
         if (result === "inserted") inserted++;
         else if (result === "duplicate") duplicates++;
-        else skipped++;
+        else if (skipReasons[result] !== undefined) skipReasons[result]++;
       }
 
       if (records.length < PAGE_SIZE) break; // dernière page atteinte
     }
-    console.log(`Terminé — ${inserted} nouveaux événements, ${duplicates} déjà présents, ${skipped} ignorés (sans date ou sans coordonnées valides).`);
-    return { inserted, duplicates, skipped };
+    const skipped = Object.values(skipReasons).reduce((a, b) => a + b, 0);
+    console.log(`Terminé — ${inserted} nouveaux événements, ${duplicates} déjà présents, ${skipped} ignorés.`);
+    return { inserted, duplicates, skipped, skipReasons, totalCount, pagesRead };
   } catch (err) {
     throw new Error(`Échec de l'import : ${err.message}`);
   } finally {
