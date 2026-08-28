@@ -364,6 +364,16 @@ app.get("/admin/import/paris-opendata", requireAdminKey, async (req, res) => {
   }
 });
 
+app.get("/admin/import/idf-opendata", requireAdminKey, async (req, res) => {
+  try {
+    const { runImport } = require("../scripts/import-idf-opendata");
+    const result = await runImport();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Sortir API démarrée sur http://localhost:${PORT}`);
