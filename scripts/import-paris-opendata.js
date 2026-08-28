@@ -5,12 +5,10 @@
 //
 // Usage : node scripts/import-paris-opendata.js
 //
-// Comme pour les autres imports, ce script n'a pas pu être testé avec un
-// vrai appel réseau depuis cet environnement de développement (domaine non
-// accessible ici). Les noms de champs utilisés ci-dessous correspondent à
-// la structure connue et documentée du jeu de données "que-faire-a-paris-",
-// mais un premier essai réel (via la route /admin) reste à faire pour les
-// confirmer — comme on l'a fait pour Ticketmaster et PredictHQ.
+// Noms de champs confirmés via un vrai appel à l'API le 28/08/2026 —
+// contrairement aux autres scripts, celui-ci a été corrigé après un premier
+// essai réel qui a révélé la vraie structure (lat_lon en {lat,lon}, prix
+// dans price_type/price_detail, tags dans qfap_tags en chaîne simple...).
 
 const path = require("path");
 const Database = require("better-sqlite3");
@@ -18,86 +16,87 @@ const Database = require("better-sqlite3");
 const API_URL = "https://opendata.paris.fr/api/explore/v2.1/catalog/datasets/que-faire-a-paris-/records";
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "db", "sortir.db");
 const PAGE_SIZE = 100;
-const MAX_PAGES = 10; // sécurité : jusqu'à 1000 événements par run
+const MAX_PAGES = 35; // jusqu'à 3500 événements par run — la source en a ~3128 au total
 
-// Correspondance grossière entre les tags/catégories de "Que faire à Paris"
-// et nos catégories maison.
+// Correspondance grossière entre les tags de "Que faire à Paris" (qfap_tags,
+// une chaîne, parfois plusieurs séparés par virgule) et nos catégories maison.
 const CATEGORY_MAP = {
   "concert": "concert", "musique": "concert",
-  "exposition": "expo", "exposition permanente": "expo", "exposition temporaire": "expo",
-  "spectacle": "spectacle", "théâtre": "spectacle", "danse": "spectacle", "cirque": "spectacle",
-  "cinéma": "cinema", "projection": "cinema",
-  "visite": "musee", "musée": "musee", "patrimoine": "musee",
-  "atelier": "ateliers", "stage": "ateliers", "cours": "ateliers",
+  "exposition": "expo", "exposition permanente": "expo", "exposition temporaire": "expo", "arts visuels": "expo",
+  "spectacle": "spectacle", "théâtre": "spectacle", "danse": "spectacle", "cirque": "spectacle", "humour": "spectacle",
+  "cinéma": "cinema", "projection": "cinema", "film": "cinema",
+  "visite": "musee", "musée": "musee", "patrimoine": "musee", "balade urbaine": "musee", "histoire": "musee",
+  "atelier": "ateliers", "stage": "ateliers", "cours": "ateliers", "artisanat": "ateliers",
   "sport": "sport", "sport et loisirs": "sport",
   "famille": "famille", "enfants": "famille", "jeune public": "famille",
-  "fête": "soiree", "bal": "soiree", "soirée": "soiree",
-  "conférence": "tech", "rencontre": "tech", "salon": "tech",
-  "marché": "gastronomie", "dégustation": "gastronomie",
+  "fête": "soiree", "bal": "soiree", "soirée": "soiree", "nuit": "soiree",
+  "conférence": "tech", "rencontre": "tech", "salon": "tech", "numérique": "tech",
+  "marché": "gastronomie", "dégustation": "gastronomie", "cuisine": "gastronomie",
 };
-function mapCategory(tags) {
-  if (!Array.isArray(tags)) return "insolite";
+function mapCategory(qfapTags) {
+  if (!qfapTags) return "insolite";
+  const tags = String(qfapTags).split(",").map(t => t.trim().toLowerCase());
   for (const t of tags) {
-    const key = (t || "").toLowerCase().trim();
-    if (CATEGORY_MAP[key]) return CATEGORY_MAP[key];
+    if (CATEGORY_MAP[t]) return CATEGORY_MAP[t];
   }
-  return "insolite"; // repli si aucun tag connu ne correspond
+  return "insolite";
 }
 
-function extractLatLng(record) {
-  // Le champ géographique est généralement "geo_point_2d": {lat, lon} —
-  // avec repli sur d'autres formes possibles selon l'export du dataset.
-  const geo = record.geo_point_2d || record.location;
-  if (geo && typeof geo.lat === "number" && typeof geo.lon === "number") {
-    return { lat: geo.lat, lng: geo.lon };
-  }
-  if (Array.isArray(geo) && geo.length === 2) {
-    return { lat: geo[0], lng: geo[1] };
-  }
-  return null;
+// Extrait un prix min/max à partir du texte libre "price_detail" (ex.
+// "De 0€ à 12€", "15€", "Entre 8€ et 20€") — on ne devine jamais un prix
+// qui ne serait pas écrit noir sur blanc dans la donnée source.
+function parsePriceDetail(priceType, priceDetail) {
+  if (/gratuit/i.test(priceType || "")) return { min: 0, max: 0 };
+  if (!priceDetail) return { min: null, max: null };
+  const numbers = [...priceDetail.matchAll(/(\d+(?:[.,]\d+)?)\s*€/g)].map(m => parseFloat(m[1].replace(",", ".")));
+  if (numbers.length === 0) return { min: null, max: null };
+  return { min: Math.min(...numbers), max: Math.max(...numbers) };
 }
 
-function upsertVenue(db, record, coords) {
-  const name = record.address_name || record.title || "Lieu à Paris";
+function upsertVenue(db, record) {
+  const lat = record.lat_lon?.lat;
+  const lng = record.lat_lon?.lon; // attention : l'API donne "lon", pas "lng"
+  if (typeof lat !== "number" || typeof lng !== "number" || (lat === 0 && lng === 0)) return null;
+
+  const name = record.address_name || "Lieu à Paris";
   const city = record.address_city || "Paris";
   const existing = db.prepare(`SELECT id FROM venues WHERE name = ? AND city = ?`).get(name, city);
   if (existing) return existing.id;
   const info = db.prepare(`INSERT INTO venues (name, city, lat, lng) VALUES (?, ?, ?, ?)`)
-    .run(name, city, coords.lat, coords.lng);
+    .run(name, city, lat, lng);
   return info.lastInsertRowid;
 }
 
 function upsertEvent(db, record, venueId) {
-  const externalId = record.id || record.recordid;
-  if (!externalId) return "skipped";
-  const existing = db.prepare(`SELECT id FROM events WHERE source = 'paris-opendata' AND external_id = ?`).get(String(externalId));
+  if (!venueId || !record.id) return "skipped";
+  if (!record.date_start) return "skipped"; // certaines fiches sont des offres permanentes sans date précise
+
+  const existing = db.prepare(`SELECT id FROM events WHERE source = 'paris-opendata' AND external_id = ?`).get(String(record.id));
   if (existing) return "duplicate";
 
-  const dateStart = (record.date_start || "").slice(0, 10);
-  const dateEnd = (record.date_end || record.date_start || "").slice(0, 10);
-  if (!dateStart) return "skipped";
-
-  // Le jeu de données indique parfois explicitement si c'est gratuit —
-  // on ne devine jamais un prix, on ne renseigne que ce qui est écrit noir sur blanc.
-  const isFree = /gratuit/i.test(record.access_type || record.price_type || "");
+  const dateStart = record.date_start.slice(0, 10);
+  const dateEnd = (record.date_end || record.date_start).slice(0, 10);
+  const timeLabel = record.date_start.slice(11, 16) ? record.date_start.slice(11, 16).replace(":", "H") : null;
+  const { min, max } = parsePriceDetail(record.price_type, record.price_detail);
 
   db.prepare(`
     INSERT INTO events (
       title, description, category_id, venue_id,
       date_start, date_end, time_label, price_min, price_max,
       cover_image_url, source, external_id, rating_avg
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'paris-opendata', ?, 0)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paris-opendata', ?, 0)
   `).run(
     record.title || "Événement à Paris",
-    record.lead_text || record.description || "",
-    mapCategory(record.tags),
+    record.lead_text || "",
+    mapCategory(record.qfap_tags),
     venueId,
     dateStart,
     dateEnd,
-    (record.date_start || "").slice(11, 16).replace(":", "H") || null,
-    isFree ? 0 : null,
-    record.cover_url || record.image || null,
-    String(externalId)
+    timeLabel,
+    min,
+    max,
+    record.cover_url || null,
+    String(record.id)
   );
   return "inserted";
 }
@@ -119,9 +118,7 @@ async function runImport() {
       if (records.length === 0) break;
 
       for (const record of records) {
-        const coords = extractLatLng(record);
-        if (!coords) { skipped++; continue; }
-        const venueId = upsertVenue(db, record, coords);
+        const venueId = upsertVenue(db, record);
         const result = upsertEvent(db, record, venueId);
         if (result === "inserted") inserted++;
         else if (result === "duplicate") duplicates++;
@@ -130,7 +127,7 @@ async function runImport() {
 
       if (records.length < PAGE_SIZE) break; // dernière page atteinte
     }
-    console.log(`Terminé — ${inserted} nouveaux événements, ${duplicates} déjà présents, ${skipped} ignorés (infos incomplètes).`);
+    console.log(`Terminé — ${inserted} nouveaux événements, ${duplicates} déjà présents, ${skipped} ignorés (sans date ou sans coordonnées valides).`);
     return { inserted, duplicates, skipped };
   } catch (err) {
     throw new Error(`Échec de l'import : ${err.message}`);
