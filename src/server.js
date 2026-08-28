@@ -41,7 +41,7 @@ app.get("/events", (req, res) => {
 
   let sql = `
     SELECT e.id, e.title, e.description, e.date_start, e.date_end, e.time_label,
-           e.price_min, e.rating_avg, e.vibe_tags,
+           e.price_min, e.price_max, e.cover_image_url, e.rating_avg, e.vibe_tags,
            c.id as category_id, c.label as category_label,
            v.name as venue_name, v.city as venue_city, v.lat as venue_lat, v.lng as venue_lng
     FROM events e
@@ -104,6 +104,8 @@ app.get("/events", (req, res) => {
     date_end: r.date_end,
     time_label: r.time_label,
     price_min: r.price_min,
+    price_max: r.price_max,
+    cover_image_url: r.cover_image_url,
     rating_avg: r.rating_avg,
     vibe_tags: r.vibe_tags ? r.vibe_tags.split(",") : [],
     distance_km: r.distance_km ?? null,
@@ -136,6 +138,8 @@ app.get("/events/:id", (req, res) => {
     date_end: event.date_end,
     time_label: event.time_label,
     price_min: event.price_min,
+    price_max: event.price_max,
+    cover_image_url: event.cover_image_url,
     rating_avg: event.rating_avg,
     vibe_tags: event.vibe_tags ? event.vibe_tags.split(",") : [],
     reviews,
@@ -295,6 +299,16 @@ app.get("/admin/import/predicthq", requireAdminKey, async (req, res) => {
     const lng = parseFloat(req.query.lng) || 2.3522;
     const radiusKm = parseInt(req.query.radius_km, 10) || 15;
     const result = await runImport(lat, lng, radiusKm);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/admin/fetch-photos", requireAdminKey, async (req, res) => {
+  try {
+    const { runFetchPhotos } = require("../scripts/fetch-photos");
+    const result = await runFetchPhotos();
     res.json({ ok: true, ...result });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
