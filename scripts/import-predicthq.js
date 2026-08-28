@@ -20,7 +20,7 @@ const path = require("path");
 const Database = require("better-sqlite3");
 
 const API_BASE = "https://api.predicthq.com/v1/events/";
-const DB_PATH = path.join(__dirname, "..", "db", "sortir.db");
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "db", "sortir.db");
 
 // PredictHQ utilise des catégories génériques anglaises — correspondance
 // grossière vers nos catégories maison, à affiner en observant les

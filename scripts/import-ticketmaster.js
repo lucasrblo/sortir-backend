@@ -15,7 +15,7 @@ const path = require("path");
 const Database = require("better-sqlite3");
 
 const API_BASE = "https://app.ticketmaster.com/discovery/v2/events.json";
-const DB_PATH = path.join(__dirname, "..", "db", "sortir.db");
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "db", "sortir.db");
 
 // Correspondance grossière entre les classifications Ticketmaster (en anglais)
 // et nos catégories maison — à affiner avec le temps en observant les vraies données.

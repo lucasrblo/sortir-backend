@@ -9,12 +9,13 @@
 const path = require("path");
 const fs = require("fs");
 
-const DB_PATH = path.join(__dirname, "sortir.db");
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "sortir.db");
 
 if (fs.existsSync(DB_PATH)) {
   console.log("Base existante trouvée — aucune réinitialisation (les données importées sont conservées).");
   process.exit(0);
 }
 
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 console.log("Aucune base trouvée — première initialisation avec les données de démo...");
 require("./seed.js");

@@ -5,7 +5,7 @@ const bcrypt = require("bcryptjs");
 const Database = require("better-sqlite3");
 const { signToken, requireAuth, optionalAuth } = require("./auth");
 
-const DB_PATH = path.join(__dirname, "..", "db", "sortir.db");
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "db", "sortir.db");
 const db = new Database(DB_PATH, { readonly: false });
 
 const app = express();

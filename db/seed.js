@@ -7,8 +7,9 @@ const fs = require("fs");
 const Database = require("better-sqlite3");
 const bcrypt = require("bcryptjs");
 
-const DB_PATH = path.join(__dirname, "sortir.db");
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "sortir.db");
 if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 const db = new Database(DB_PATH);
 db.exec(fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8"));
