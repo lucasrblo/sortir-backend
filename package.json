@@ -10,6 +10,7 @@
   "scripts": {
     "seed": "node db/seed.js",
     "import:ticketmaster": "node scripts/import-ticketmaster.js",
+    "import:predicthq": "node scripts/import-predicthq.js",
     "start": "node src/server.js",
     "dev": "node src/server.js"
   },

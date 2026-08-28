@@ -60,9 +60,9 @@ function upsertVenue(db, venue) {
   if (existing) return existing.id;
 
   const info = db.prepare(`
-    INSERT INTO venues (name, address, city, lat, lng)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(venue.name, venue.address?.line1 || "", venue.city?.name || "", lat, lng);
+    INSERT INTO venues (name, city, lat, lng)
+    VALUES (?, ?, ?, ?)
+  `).run(venue.name, venue.city?.name || "", lat, lng);
   return info.lastInsertRowid;
 }
 

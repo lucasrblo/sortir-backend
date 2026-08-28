@@ -44,9 +44,15 @@ CREATE TABLE events (
   date_end        TEXT NOT NULL,
   time_label      TEXT,
   price_min       REAL DEFAULT 0,
+  price_max       REAL,
+  cover_image_url TEXT,
+  source          TEXT DEFAULT 'manuel',  -- 'manuel' | 'ticketmaster' | 'predicthq' | ...
+  external_id     TEXT,                    -- id chez la source, pour éviter les doublons
   rating_avg      REAL DEFAULT 0,
-  vibe_tags       TEXT DEFAULT ''  -- ex. "solo,couple,amis"
+  vibe_tags       TEXT DEFAULT '',  -- ex. "solo,couple,amis"
+  UNIQUE (source, external_id)
 );
+CREATE INDEX events_source_idx ON events(source, external_id);
 
 CREATE TABLE favorites (
   user_id    INTEGER NOT NULL REFERENCES users(id),
