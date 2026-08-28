@@ -37,7 +37,7 @@ function haversineKm(lat1, lon1, lat2, lon2) {
  *   sort        - "date" (défaut) | "price" | "rating" | "distance"
  */
 app.get("/events", (req, res) => {
-  const { category, date, price_max, rating_min, lat, lng, radius_km, sort } = req.query;
+  const { category, date, price_max, rating_min, lat, lng, radius_km, sort, limit } = req.query;
 
   let sql = `
     SELECT e.id, e.title, e.description, e.date_start, e.date_end, e.time_label,
@@ -58,6 +58,12 @@ app.get("/events", (req, res) => {
   if (date) {
     sql += " AND @date BETWEEN e.date_start AND e.date_end";
     params.date = date;
+  } else {
+    // Par défaut (aucune date précise demandée), on n'affiche que ce qui n'est
+    // pas déjà terminé — avec un catalogue de plusieurs milliers d'événements,
+    // il n'y a aucune raison de renvoyer ceux du mois dernier.
+    sql += " AND e.date_end >= @today";
+    params.today = new Date().toISOString().slice(0, 10);
   }
   if (price_max !== undefined) {
     sql += " AND e.price_min <= @price_max";
@@ -94,6 +100,12 @@ app.get("/events", (req, res) => {
     rows.sort((a, b) => a.date_start.localeCompare(b.date_start));
   }
 
+  // Pagination : par défaut 300 événements (largement assez pour remplir
+  // l'app sans ralentir son ouverture), plafonné à 1000 même si demandé plus.
+  const totalMatching = rows.length;
+  const effectiveLimit = Math.min(Number(limit) || 300, 1000);
+  rows = rows.slice(0, effectiveLimit);
+
   const events = rows.map(r => ({
     id: r.id,
     title: r.title,
@@ -111,7 +123,7 @@ app.get("/events", (req, res) => {
     distance_km: r.distance_km ?? null,
   }));
 
-  res.json({ events, total: events.length });
+  res.json({ events, total: events.length, total_matching: totalMatching });
 });
 
 // GET /events/:id — détail complet, avec les avis
