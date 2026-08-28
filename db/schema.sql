@@ -46,6 +46,7 @@ CREATE TABLE events (
   price_min       REAL DEFAULT 0,
   price_max       REAL,
   cover_image_url TEXT,
+  ticket_url      TEXT,   -- lien réel vers la billetterie source — indispensable pour l'affiliation
   source          TEXT DEFAULT 'manuel',  -- 'manuel' | 'ticketmaster' | 'predicthq' | ...
   external_id     TEXT,                    -- id chez la source, pour éviter les doublons
   rating_avg      REAL DEFAULT 0,
@@ -53,6 +54,15 @@ CREATE TABLE events (
   UNIQUE (source, external_id)
 );
 CREATE INDEX events_source_idx ON events(source, external_id);
+
+-- Un clic = quelqu'un a suivi le lien vers la billetterie. Sert à la fois
+-- de base pour le reporting d'affiliation plus tard, et à voir simplement
+-- ce qui intéresse le plus les gens.
+CREATE TABLE ticket_clicks (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id    INTEGER NOT NULL REFERENCES events(id),
+  clicked_at  TEXT DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE favorites (
   user_id    INTEGER NOT NULL REFERENCES users(id),

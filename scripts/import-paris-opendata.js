@@ -98,8 +98,8 @@ function upsertEvent(db, record, venueId) {
     INSERT INTO events (
       title, description, category_id, venue_id,
       date_start, date_end, time_label, price_min, price_max,
-      cover_image_url, source, external_id, rating_avg
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paris-opendata', ?, 0)
+      cover_image_url, ticket_url, source, external_id, rating_avg
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paris-opendata', ?, 0)
   `).run(
     record.title || "Événement à Paris",
     record.lead_text || "",
@@ -111,6 +111,7 @@ function upsertEvent(db, record, venueId) {
     min,
     max,
     record.cover_url || null,
+    record.url || null,
     String(record.id)
   );
   return "inserted";

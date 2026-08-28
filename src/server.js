@@ -41,7 +41,7 @@ app.get("/events", (req, res) => {
 
   let sql = `
     SELECT e.id, e.title, e.description, e.date_start, e.date_end, e.time_label,
-           e.price_min, e.price_max, e.cover_image_url, e.rating_avg, e.vibe_tags,
+           e.price_min, e.price_max, e.cover_image_url, e.ticket_url, e.rating_avg, e.vibe_tags,
            c.id as category_id, c.label as category_label,
            v.name as venue_name, v.city as venue_city, v.lat as venue_lat, v.lng as venue_lng
     FROM events e
@@ -118,6 +118,7 @@ app.get("/events", (req, res) => {
     price_min: r.price_min,
     price_max: r.price_max,
     cover_image_url: r.cover_image_url,
+    ticket_url: r.ticket_url,
     rating_avg: r.rating_avg,
     vibe_tags: r.vibe_tags ? r.vibe_tags.split(",") : [],
     distance_km: r.distance_km ?? null,
@@ -152,6 +153,7 @@ app.get("/events/:id", (req, res) => {
     price_min: event.price_min,
     price_max: event.price_max,
     cover_image_url: event.cover_image_url,
+    ticket_url: event.ticket_url,
     rating_avg: event.rating_avg,
     vibe_tags: event.vibe_tags ? event.vibe_tags.split(",") : [],
     reviews,
@@ -161,6 +163,30 @@ app.get("/events/:id", (req, res) => {
 // GET /categories — utile pour construire les chips côté app sans les coder en dur
 app.get("/categories", (req, res) => {
   res.json(db.prepare("SELECT * FROM categories").all());
+});
+
+// POST /events/:id/click-ticket — enregistre qu'on a suivi le lien vers la
+// billetterie. Public (pas besoin d'être connecté) : c'est une simple mesure
+// d'intérêt, base pour le reporting d'affiliation plus tard.
+app.post("/events/:id/click-ticket", (req, res) => {
+  const event = db.prepare("SELECT id FROM events WHERE id = ?").get(req.params.id);
+  if (!event) return res.status(404).json({ error: "Événement introuvable" });
+  db.prepare("INSERT INTO ticket_clicks (event_id) VALUES (?)").run(event.id);
+  res.status(201).json({ ok: true });
+});
+
+// GET /admin/stats/clicks — petit récap des clics vers la billetterie,
+// utile pour suivre ce qui intéresse le plus les gens.
+app.get("/admin/stats/clicks", requireAdminKey, (req, res) => {
+  const rows = db.prepare(`
+    SELECT e.id, e.title, COUNT(tc.id) as clicks
+    FROM ticket_clicks tc
+    JOIN events e ON e.id = tc.event_id
+    GROUP BY e.id
+    ORDER BY clicks DESC
+    LIMIT 20
+  `).all();
+  res.json({ top_events: rows });
 });
 
 // ============================================================

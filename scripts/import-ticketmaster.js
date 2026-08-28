@@ -79,8 +79,8 @@ function upsertEvent(db, ev, venueId) {
     INSERT INTO events (
       title, description, category_id, venue_id,
       date_start, date_end, time_label, price_min, price_max,
-      cover_image_url, source, external_id, rating_avg
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ticketmaster', ?, 0)
+      cover_image_url, ticket_url, source, external_id, rating_avg
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ticketmaster', ?, 0)
   `).run(
     ev.name,
     ev.info || ev.pleaseNote || "",
@@ -92,6 +92,7 @@ function upsertEvent(db, ev, venueId) {
     priceRange?.min ?? null,
     priceRange?.max ?? null,
     ev.images?.[0]?.url || null,
+    ev.url || null,
     ev.id
   );
   return "inserted";
