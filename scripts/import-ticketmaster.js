@@ -97,17 +97,13 @@ function upsertEvent(db, ev, venueId) {
   return "inserted";
 }
 
-async function main() {
+async function runImport(city = "Paris") {
   const apiKey = process.env.TICKETMASTER_API_KEY;
   if (!apiKey) {
-    console.error("❌ TICKETMASTER_API_KEY manquant. Ajoute-le dans tes variables d'environnement (voir .env.example) puis relance.");
-    process.exit(1);
+    throw new Error("TICKETMASTER_API_KEY manquant.");
   }
 
-  const city = process.argv[2] || "Paris";
   const db = new Database(DB_PATH);
-
-  console.log(`Import Ticketmaster pour "${city}"...`);
   let inserted = 0, duplicates = 0, skipped = 0, page = 0, totalPages = 1;
 
   try {
@@ -129,12 +125,18 @@ async function main() {
     } while (page < totalPages && page < 5); // limite de sécurité : 5 pages max par run
 
     console.log(`Terminé — ${inserted} nouveaux événements, ${duplicates} déjà présents, ${skipped} ignorés (infos incomplètes).`);
+    return { city, inserted, duplicates, skipped };
   } catch (err) {
-    console.error("❌ Échec de l'import :", err.message);
-    process.exit(1);
+    throw new Error(`Échec de l'import : ${err.message}`);
   } finally {
     db.close();
   }
 }
 
-main();
+module.exports = { runImport };
+
+if (require.main === module) {
+  runImport(process.argv[2] || "Paris")
+    .then(r => console.log(r))
+    .catch(err => { console.error("❌", err.message); process.exit(1); });
+}

@@ -115,19 +115,13 @@ function upsertEvent(db, phqEvent, venueId) {
   return "inserted";
 }
 
-async function main() {
+async function runImport(lat = 48.8566, lng = 2.3522, radiusKm = 15) {
   const apiKey = process.env.PREDICTHQ_API_KEY;
   if (!apiKey) {
-    console.error("❌ PREDICTHQ_API_KEY manquant. Ajoute-le dans tes variables d'environnement puis relance.");
-    process.exit(1);
+    throw new Error("PREDICTHQ_API_KEY manquant.");
   }
 
-  const lat = parseFloat(process.argv[2]) || 48.8566;   // Paris par défaut
-  const lng = parseFloat(process.argv[3]) || 2.3522;
-  const radiusKm = parseInt(process.argv[4], 10) || 15;
-
   const db = new Database(DB_PATH);
-  console.log(`Import PredictHQ autour de (${lat}, ${lng}), rayon ${radiusKm} km...`);
   let inserted = 0, duplicates = 0, skipped = 0, offset = 0;
   const PAGE_LIMIT = 5; // sécurité : 5 pages max par run (250 événements)
 
@@ -149,12 +143,21 @@ async function main() {
       offset += results.length;
     }
     console.log(`Terminé — ${inserted} nouveaux événements, ${duplicates} déjà présents, ${skipped} ignorés.`);
+    return { lat, lng, radiusKm, inserted, duplicates, skipped };
   } catch (err) {
-    console.error("❌ Échec de l'import :", err.message);
-    process.exit(1);
+    throw new Error(`Échec de l'import : ${err.message}`);
   } finally {
     db.close();
   }
 }
 
-main();
+module.exports = { runImport };
+
+if (require.main === module) {
+  const lat = parseFloat(process.argv[2]) || 48.8566;
+  const lng = parseFloat(process.argv[3]) || 2.3522;
+  const radiusKm = parseInt(process.argv[4], 10) || 15;
+  runImport(lat, lng, radiusKm)
+    .then(r => console.log(r))
+    .catch(err => { console.error("❌", err.message); process.exit(1); });
+}

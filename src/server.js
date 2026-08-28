@@ -260,6 +260,47 @@ app.post("/events/:id/reviews", requireAuth, (req, res) => {
   res.status(201).json({ ok: true });
 });
 
+// ============================================================
+// Import de données réelles (Ticketmaster, PredictHQ) — déclenché
+// via une route plutôt que par un script séparé, pour être certain
+// que l'import s'exécute dans CE processus, celui qui a réellement
+// le volume persistant monté (contrairement à une session Console,
+// qui tourne dans un conteneur à part).
+//
+// Protégé par une clé simple (ADMIN_KEY) passée en paramètre d'URL —
+// suffisant pour un usage interne/développement, mais à durcir
+// (header + vraie auth) avant un usage public.
+// ============================================================
+function requireAdminKey(req, res, next) {
+  const key = req.query.key;
+  if (!process.env.ADMIN_KEY) return res.status(503).json({ error: "ADMIN_KEY non configuré sur le serveur" });
+  if (key !== process.env.ADMIN_KEY) return res.status(401).json({ error: "Clé admin invalide" });
+  next();
+}
+
+app.get("/admin/import/ticketmaster", requireAdminKey, async (req, res) => {
+  try {
+    const { runImport } = require("../scripts/import-ticketmaster");
+    const result = await runImport(req.query.city || "Paris");
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/admin/import/predicthq", requireAdminKey, async (req, res) => {
+  try {
+    const { runImport } = require("../scripts/import-predicthq");
+    const lat = parseFloat(req.query.lat) || 48.8566;
+    const lng = parseFloat(req.query.lng) || 2.3522;
+    const radiusKm = parseInt(req.query.radius_km, 10) || 15;
+    const result = await runImport(lat, lng, radiusKm);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Sortir API démarrée sur http://localhost:${PORT}`);
