@@ -147,6 +147,7 @@ async function runImport(resetCursor = false) {
   const skipReasons = { skipped_no_id: 0, skipped_no_date: 0, skipped_no_location: 0, skipped_out_of_region: 0 };
   let offset = resetCursor ? 0 : getCursor(db, "idf-opendata");
   const startOffset = offset;
+  let hitAnonymousCeiling = false;
 
   try {
     for (let page = 0; page < MAX_PAGES; page++) {
@@ -154,6 +155,15 @@ async function runImport(resetCursor = false) {
       const res = await fetch(url);
       if (!res.ok) {
         const body = await res.text().catch(() => "");
+        // Ce portail (accès anonyme, sans clé) refuse d'aller au-delà des
+        // 10 000 premiers résultats — ce n'est pas une erreur à corriger,
+        // c'est une vraie limite du service. On s'arrête proprement et on
+        // repart du début au prochain appel plutôt que de planter.
+        if (res.status === 400 && /offset \+ limit/i.test(body)) {
+          hitAnonymousCeiling = true;
+          offset = 0;
+          break;
+        }
         throw new Error(`Île-de-France Open Data a répondu ${res.status} : ${body.slice(0, 300)}`);
       }
       const data = await res.json();
@@ -177,7 +187,14 @@ async function runImport(resetCursor = false) {
     setCursor(db, "idf-opendata", offset);
     const skipped = Object.values(skipReasons).reduce((a, b) => a + b, 0);
     console.log(`Terminé — ${inserted} nouveaux événements, ${duplicates} déjà présents, ${skipped} ignorés.`);
-    return { inserted, duplicates, skipped, skipReasons, totalCount, rangeRead: `${startOffset}–${startOffset + MAX_PAGES * PAGE_SIZE}`, nextOffset: offset };
+    return {
+      inserted, duplicates, skipped, skipReasons, totalCount,
+      rangeRead: `${startOffset}–${startOffset + MAX_PAGES * PAGE_SIZE}`,
+      nextOffset: offset,
+      note: hitAnonymousCeiling
+        ? "Limite des 10 000 premiers résultats atteinte (accès anonyme) — le curseur est reparti à zéro, cette tranche est désormais entièrement couverte."
+        : undefined,
+    };
   } catch (err) {
     throw new Error(`Échec de l'import : ${err.message}`);
   } finally {
