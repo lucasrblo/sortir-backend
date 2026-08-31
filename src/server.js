@@ -333,10 +333,13 @@ app.get("/admin/import/ticketmaster", requireAdminKey, async (req, res) => {
 app.get("/admin/import/predicthq", requireAdminKey, async (req, res) => {
   try {
     const { runImport } = require("../scripts/import-predicthq");
-    const lat = parseFloat(req.query.lat) || 48.8566;
-    const lng = parseFloat(req.query.lng) || 2.3522;
-    const radiusKm = parseInt(req.query.radius_km, 10) || 15;
-    const result = await runImport(lat, lng, radiusKm);
+    // Sans paramètres : couvre la France entière par défaut (le script gère
+    // ses propres valeurs par défaut nationales).
+    const lat = req.query.lat ? parseFloat(req.query.lat) : undefined;
+    const lng = req.query.lng ? parseFloat(req.query.lng) : undefined;
+    const radiusKm = req.query.radius_km ? parseInt(req.query.radius_km, 10) : undefined;
+    const reset = req.query.reset === "1";
+    const result = await runImport(lat, lng, radiusKm, reset);
     res.json({ ok: true, ...result });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -367,7 +370,8 @@ app.get("/admin/import/paris-opendata", requireAdminKey, async (req, res) => {
 app.get("/admin/import/idf-opendata", requireAdminKey, async (req, res) => {
   try {
     const { runImport } = require("../scripts/import-idf-opendata");
-    const result = await runImport();
+    const reset = req.query.reset === "1";
+    const result = await runImport(reset);
     res.json({ ok: true, ...result });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });

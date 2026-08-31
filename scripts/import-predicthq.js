@@ -4,17 +4,14 @@
 // et la plus légitime de couvrir "plein de sites différents" sans avoir à
 // écrire un scraper par plateforme.
 //
-// Prérequis : PREDICTHQ_API_KEY dans les variables d'environnement
-// (compte gratuit sur predicthq.com — 14 jours d'essai puis un plan
-// gratuit permanent avec quota réduit).
+// Couverture : France entière par défaut (un seul grand cercle centré
+// géographiquement sur le pays), avec reprise automatique d'un appel à
+// l'autre — comme pour l'import Île-de-France/OpenAgenda, chaque appel
+// avance dans les résultats au lieu de toujours retélécharger les mêmes.
+//
+// Prérequis : PREDICTHQ_API_KEY dans les variables d'environnement.
 //
 // Usage : node scripts/import-predicthq.js [lat] [lng] [rayon_km]
-//   node scripts/import-predicthq.js 48.8566 2.3522 15
-//
-// Comme pour le script Ticketmaster, cet import n'a pas pu être testé
-// avec un vrai appel réseau depuis cet environnement de développement —
-// il suit fidèlement la documentation officielle de l'API Events de
-// PredictHQ, mais un premier essai réel reste à faire une fois déployé.
 
 const path = require("path");
 const Database = require("better-sqlite3");
@@ -22,9 +19,16 @@ const Database = require("better-sqlite3");
 const API_BASE = "https://api.predicthq.com/v1/events/";
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "db", "sortir.db");
 
-// PredictHQ utilise des catégories génériques anglaises — correspondance
-// grossière vers nos catégories maison, à affiner en observant les
-// vraies données une fois l'import testé.
+// Centre géographique approximatif de la France métropolitaine (proche de
+// Bourges), avec un rayon large pour couvrir tout le pays d'un seul cercle —
+// des coins comme la pointe bretonne ou Nice sont un peu excentrés mais
+// restent globalement couverts.
+const DEFAULT_LAT = 46.8;
+const DEFAULT_LNG = 2.4;
+const DEFAULT_RADIUS_KM = 600;
+
+// Catégories PredictHQ demandées — "food-drink" (gastronomie) et "academic"
+// manquaient à l'appel précédent, laissant ces catégories quasi vides.
 const CATEGORY_MAP = {
   concerts: "concert",
   "performing-arts": "spectacle",
@@ -33,14 +37,50 @@ const CATEGORY_MAP = {
   expos: "expo",
   community: "ateliers",
   conferences: "tech",
+  "food-drink": "gastronomie",
+  academic: "tech",
 };
 const PHQ_CATEGORIES = Object.keys(CATEGORY_MAP).join(",");
 
+// PredictHQ n'a pas de catégorie dédiée pour certaines de nos rubriques
+// (mode, love, pop-up, cinéma, bien-être, famille) — on les retrouve en
+// examinant le titre/la description des événements déjà catégorisés,
+// plutôt que de les laisser systématiquement finir dans "insolite".
+const KEYWORD_OVERRIDES = [
+  { cat: "cinema", words: ["cinéma", "cinema", "ciné-concert", "projection", "film en plein air"] },
+  { cat: "mode", words: ["mode", "fashion", "défilé", "créateurs de mode"] },
+  { cat: "love", words: ["speed dating", "célibataire", "rencontre amoureuse", "soirée coquine"] },
+  { cat: "popup", words: ["pop-up", "vide-dressing", "vide dressing", "marché aux puces", "brocante"] },
+  { cat: "bienetre", words: ["yoga", "méditation", "bien-être", "bien etre", "sophrologie"] },
+  { cat: "famille", words: ["famille", "jeune public", "enfants", "kids"] },
+];
+function applyKeywordOverride(baseCategory, title, description) {
+  const text = `${title || ""} ${description || ""}`.toLowerCase();
+  for (const rule of KEYWORD_OVERRIDES) {
+    if (rule.words.some(w => text.includes(w))) return rule.cat;
+  }
+  return baseCategory;
+}
 function mapCategory(phqCategory) {
   return CATEGORY_MAP[phqCategory] || "insolite";
 }
 
-async function fetchEvents(lat, lng, radiusKm, apiKey, offset = 0) {
+// Curseur de reprise partagé avec les autres imports paginés — chaque appel
+// avance automatiquement au lieu de repartir de zéro.
+function ensureStateTable(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS import_cursor (source TEXT PRIMARY KEY, next_offset INTEGER DEFAULT 0)`);
+}
+function getCursor(db, source) {
+  ensureStateTable(db);
+  const row = db.prepare(`SELECT next_offset FROM import_cursor WHERE source = ?`).get(source);
+  return row ? row.next_offset : 0;
+}
+function setCursor(db, source, offset) {
+  db.prepare(`INSERT INTO import_cursor (source, next_offset) VALUES (?, ?)
+              ON CONFLICT(source) DO UPDATE SET next_offset = excluded.next_offset`).run(source, offset);
+}
+
+async function fetchEvents(lat, lng, radiusKm, apiKey, offset) {
   const url = new URL(API_BASE);
   url.searchParams.set("within", `${radiusKm}km@${lat},${lng}`);
   url.searchParams.set("category", PHQ_CATEGORIES);
@@ -69,8 +109,6 @@ function upsertVenue(db, phqEvent) {
   if (!Array.isArray(coords) || coords.length < 2) return null;
   const [lng, lat] = coords;
 
-  // Le nom du lieu est rarement structuré proprement dans PredictHQ — on
-  // retombe sur le nom de l'événement si aucune entité "venue" n'est fournie.
   const venueEntity = (phqEvent.entities || []).find(e => e.type === "venue");
   const name = venueEntity?.name || phqEvent.title;
   const city = phqEvent.geo?.address?.locality || "";
@@ -91,7 +129,8 @@ function upsertEvent(db, phqEvent, venueId) {
   const existing = db.prepare(`SELECT id FROM events WHERE source = 'predicthq' AND external_id = ?`).get(phqEvent.id);
   if (existing) return "duplicate";
 
-  const category = mapCategory(phqEvent.category);
+  const baseCategory = mapCategory(phqEvent.category);
+  const category = applyKeywordOverride(baseCategory, phqEvent.title, phqEvent.description);
   const dateStart = phqEvent.start.slice(0, 10);
   const dateEnd = (phqEvent.end || phqEvent.start).slice(0, 10);
   const timeLabel = phqEvent.start.includes("T") ? phqEvent.start.slice(11, 16).replace(":", "H") : null;
@@ -115,21 +154,23 @@ function upsertEvent(db, phqEvent, venueId) {
   return "inserted";
 }
 
-async function runImport(lat = 48.8566, lng = 2.3522, radiusKm = 15) {
+async function runImport(lat = DEFAULT_LAT, lng = DEFAULT_LNG, radiusKm = DEFAULT_RADIUS_KM, resetCursor = false) {
   const apiKey = process.env.PREDICTHQ_API_KEY;
   if (!apiKey) {
     throw new Error("PREDICTHQ_API_KEY manquant.");
   }
 
   const db = new Database(DB_PATH);
-  let inserted = 0, duplicates = 0, skipped = 0, offset = 0;
+  let inserted = 0, duplicates = 0, skipped = 0;
+  let offset = resetCursor ? 0 : getCursor(db, "predicthq");
+  const startOffset = offset;
   const PAGE_LIMIT = 5; // sécurité : 5 pages max par run (250 événements)
 
   try {
     for (let page = 0; page < PAGE_LIMIT; page++) {
       const data = await fetchEvents(lat, lng, radiusKm, apiKey, offset);
       const results = data.results || [];
-      if (results.length === 0) break;
+      if (results.length === 0) { offset = 0; break; } // fin des résultats → on repart du début au prochain appel
 
       for (const ev of results) {
         const venueId = upsertVenue(db, ev);
@@ -139,11 +180,12 @@ async function runImport(lat = 48.8566, lng = 2.3522, radiusKm = 15) {
         else skipped++;
       }
 
-      if (!data.next) break;
       offset += results.length;
+      if (!data.next) { offset = 0; break; }
     }
+    setCursor(db, "predicthq", offset);
     console.log(`Terminé — ${inserted} nouveaux événements, ${duplicates} déjà présents, ${skipped} ignorés.`);
-    return { lat, lng, radiusKm, inserted, duplicates, skipped };
+    return { lat, lng, radiusKm, inserted, duplicates, skipped, rangeRead: `${startOffset}–${offset}`, nextOffset: offset };
   } catch (err) {
     throw new Error(`Échec de l'import : ${err.message}`);
   } finally {
@@ -154,10 +196,11 @@ async function runImport(lat = 48.8566, lng = 2.3522, radiusKm = 15) {
 module.exports = { runImport };
 
 if (require.main === module) {
-  const lat = parseFloat(process.argv[2]) || 48.8566;
-  const lng = parseFloat(process.argv[3]) || 2.3522;
-  const radiusKm = parseInt(process.argv[4], 10) || 15;
-  runImport(lat, lng, radiusKm)
+  const lat = parseFloat(process.argv[2]) || DEFAULT_LAT;
+  const lng = parseFloat(process.argv[3]) || DEFAULT_LNG;
+  const radiusKm = parseInt(process.argv[4], 10) || DEFAULT_RADIUS_KM;
+  const reset = process.argv.includes("--reset");
+  runImport(lat, lng, radiusKm, reset)
     .then(r => console.log(r))
     .catch(err => { console.error("❌", err.message); process.exit(1); });
 }

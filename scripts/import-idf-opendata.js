@@ -20,6 +20,16 @@ const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "db", "sortir.
 const PAGE_SIZE = 100;
 const MAX_PAGES = 35;
 
+// Cette source republie en réalité un export OpenAgenda MONDIAL (malgré son
+// nom sur le portail régional) — sans filtre, on importerait des événements
+// du monde entier. Pour l'instant on couvre la France métropolitaine ; le
+// jour où on veut passer à l'échelle mondiale, il suffira de supprimer ce
+// filtre (aucune autre source à brancher, les données sont déjà là).
+const FRANCE_BOUNDS = { latMin: 41.0, latMax: 51.5, lngMin: -5.5, lngMax: 9.8 };
+function isInFrance(lat, lng) {
+  return lat >= FRANCE_BOUNDS.latMin && lat <= FRANCE_BOUNDS.latMax && lng >= FRANCE_BOUNDS.lngMin && lng <= FRANCE_BOUNDS.lngMax;
+}
+
 const CATEGORY_MAP = {
   "musique": "concert", "concert": "concert",
   "exposition": "expo", "arts visuels": "expo", "arts-visuels": "expo",
@@ -113,14 +123,33 @@ function upsertEvent(db, record, venueId) {
   return "inserted";
 }
 
-async function runImport() {
+// Le curseur de reprise est stocké directement dans la base (table
+// import_cursor), pour que chaque appel reprenne là où le précédent
+// s'est arrêté au lieu de toujours retélécharger les mêmes 3500 premiers
+// événements sur les 195 000 disponibles.
+function ensureStateTable(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS import_cursor (source TEXT PRIMARY KEY, next_offset INTEGER DEFAULT 0)`);
+}
+function getCursor(db, source) {
+  ensureStateTable(db);
+  const row = db.prepare(`SELECT next_offset FROM import_cursor WHERE source = ?`).get(source);
+  return row ? row.next_offset : 0;
+}
+function setCursor(db, source, offset) {
+  db.prepare(`INSERT INTO import_cursor (source, next_offset) VALUES (?, ?)
+              ON CONFLICT(source) DO UPDATE SET next_offset = excluded.next_offset`).run(source, offset);
+}
+
+async function runImport(resetCursor = false) {
   const db = new Database(DB_PATH);
   let inserted = 0, duplicates = 0, totalCount = null;
-  const skipReasons = { skipped_no_id: 0, skipped_no_date: 0, skipped_no_location: 0 };
+  const skipReasons = { skipped_no_id: 0, skipped_no_date: 0, skipped_no_location: 0, skipped_out_of_region: 0 };
+  let offset = resetCursor ? 0 : getCursor(db, "idf-opendata");
+  const startOffset = offset;
 
   try {
     for (let page = 0; page < MAX_PAGES; page++) {
-      const url = `${API_URL}?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`;
+      const url = `${API_URL}?limit=${PAGE_SIZE}&offset=${offset}`;
       const res = await fetch(url);
       if (!res.ok) {
         const body = await res.text().catch(() => "");
@@ -129,10 +158,11 @@ async function runImport() {
       const data = await res.json();
       if (totalCount === null) totalCount = data.total_count ?? null;
       const records = data.results || [];
-      if (records.length === 0) break;
+      if (records.length === 0) { offset = 0; break; } // fin du jeu de données atteinte → on repart du début au prochain appel
 
       for (const record of records) {
         const coords = extractCoords(record);
+        if (coords && !isInFrance(coords.lat, coords.lng)) { skipReasons.skipped_out_of_region++; continue; }
         const venueId = coords ? upsertVenue(db, record, coords) : null;
         const result = upsertEvent(db, record, venueId);
         if (result === "inserted") inserted++;
@@ -140,11 +170,13 @@ async function runImport() {
         else if (skipReasons[result] !== undefined) skipReasons[result]++;
       }
 
-      if (records.length < PAGE_SIZE) break;
+      offset += records.length;
+      if (records.length < PAGE_SIZE) { offset = 0; break; } // dernière page → on repart du début au prochain appel
     }
+    setCursor(db, "idf-opendata", offset);
     const skipped = Object.values(skipReasons).reduce((a, b) => a + b, 0);
     console.log(`Terminé — ${inserted} nouveaux événements, ${duplicates} déjà présents, ${skipped} ignorés.`);
-    return { inserted, duplicates, skipped, skipReasons, totalCount };
+    return { inserted, duplicates, skipped, skipReasons, totalCount, rangeRead: `${startOffset}–${startOffset + MAX_PAGES * PAGE_SIZE}`, nextOffset: offset };
   } catch (err) {
     throw new Error(`Échec de l'import : ${err.message}`);
   } finally {
@@ -155,7 +187,8 @@ async function runImport() {
 module.exports = { runImport };
 
 if (require.main === module) {
-  runImport()
+  const reset = process.argv.includes("--reset");
+  runImport(reset)
     .then(r => console.log(r))
     .catch(err => { console.error("❌", err.message); process.exit(1); });
 }
