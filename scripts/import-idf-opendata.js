@@ -136,6 +136,7 @@ function getCursor(db, source) {
   return row ? row.next_offset : 0;
 }
 function setCursor(db, source, offset) {
+  ensureStateTable(db); // sécurité — au cas où reset=1 aurait sauté l'appel à getCursor()
   db.prepare(`INSERT INTO import_cursor (source, next_offset) VALUES (?, ?)
               ON CONFLICT(source) DO UPDATE SET next_offset = excluded.next_offset`).run(source, offset);
 }

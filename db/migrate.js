@@ -44,6 +44,16 @@ const MIGRATIONS = [
       );
     `),
   },
+  {
+    name: "import_cursor table",
+    needed: db => !tableExists(db, "import_cursor"),
+    apply: db => db.exec(`
+      CREATE TABLE import_cursor (
+        source      TEXT PRIMARY KEY,
+        next_offset INTEGER DEFAULT 0
+      );
+    `),
+  },
 ];
 
 function runMigrations(db) {
