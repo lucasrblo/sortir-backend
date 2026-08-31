@@ -27,8 +27,9 @@ const DEFAULT_LAT = 46.8;
 const DEFAULT_LNG = 2.4;
 const DEFAULT_RADIUS_KM = 600;
 
-// Catégories PredictHQ demandées — "food-drink" (gastronomie) et "academic"
-// manquaient à l'appel précédent, laissant ces catégories quasi vides.
+// Catégories PredictHQ demandées — confirmées via la vraie liste renvoyée
+// par leur API (pas de "food-drink" en réalité, contrairement à ce qu'on
+// pensait — la gastronomie est compensée plus bas par détection de mots-clés).
 const CATEGORY_MAP = {
   concerts: "concert",
   "performing-arts": "spectacle",
@@ -37,16 +38,16 @@ const CATEGORY_MAP = {
   expos: "expo",
   community: "ateliers",
   conferences: "tech",
-  "food-drink": "gastronomie",
   academic: "tech",
 };
 const PHQ_CATEGORIES = Object.keys(CATEGORY_MAP).join(",");
 
 // PredictHQ n'a pas de catégorie dédiée pour certaines de nos rubriques
-// (mode, love, pop-up, cinéma, bien-être, famille) — on les retrouve en
-// examinant le titre/la description des événements déjà catégorisés,
-// plutôt que de les laisser systématiquement finir dans "insolite".
+// (mode, love, pop-up, cinéma, bien-être, famille, gastronomie) — on les
+// retrouve en examinant le titre/la description des événements déjà
+// catégorisés, plutôt que de les laisser systématiquement finir dans "insolite".
 const KEYWORD_OVERRIDES = [
+  { cat: "gastronomie", words: ["dégustation", "marché gourmand", "food festival", "gastronomie", "vin", "cuisine"] },
   { cat: "cinema", words: ["cinéma", "cinema", "ciné-concert", "projection", "film en plein air"] },
   { cat: "mode", words: ["mode", "fashion", "défilé", "créateurs de mode"] },
   { cat: "love", words: ["speed dating", "célibataire", "rencontre amoureuse", "soirée coquine"] },
