@@ -378,8 +378,33 @@ app.get("/admin/import/idf-opendata", requireAdminKey, async (req, res) => {
   }
 });
 
+app.get("/admin/import/sports-fr", requireAdminKey, async (req, res) => {
+  try {
+    const { runImport } = require("../scripts/import-sports-fr");
+    const result = await runImport();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/admin/recategorize", requireAdminKey, async (req, res) => {
+  try {
+    const { runImport } = require("../scripts/recategorize");
+    const result = await runImport();
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Sortir API démarrée sur http://localhost:${PORT}`);
   console.log(`Essaie : http://localhost:${PORT}/events?category=concert&sort=price`);
+  // Le catalogue s'enrichit désormais tout seul, sans avoir à déclencher
+  // les imports manuellement — désactivable via AUTO_IMPORT=false si besoin.
+  if (process.env.AUTO_IMPORT !== "false") {
+    require("./scheduler").startScheduler();
+  }
 });

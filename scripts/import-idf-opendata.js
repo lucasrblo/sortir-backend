@@ -57,6 +57,26 @@ function mapCategory(record) {
   return "insolite";
 }
 
+// Même repêchage que pour PredictHQ et Paris Open Data — cette source
+// n'a pas non plus de catégorie fine pour mode/love/pop-up/cinéma/
+// bien-être/gastronomie/famille, on les retrouve via le titre.
+const KEYWORD_OVERRIDES = [
+  { cat: "cinema", words: ["cinéma", "cinema", "ciné-concert", "projection", "film en plein air"] },
+  { cat: "mode", words: ["mode", "fashion", "défilé", "créateurs de mode"] },
+  { cat: "love", words: ["speed dating", "célibataire", "rencontre amoureuse", "soirée coquine"] },
+  { cat: "popup", words: ["pop-up", "vide-dressing", "vide dressing", "marché aux puces", "brocante"] },
+  { cat: "bienetre", words: ["yoga", "méditation", "bien-être", "bien etre", "sophrologie"] },
+  { cat: "famille", words: ["famille", "jeune public", "enfants", "kids"] },
+  { cat: "gastronomie", words: ["dégustation", "marché gourmand", "food festival", "gastronomie", "vin", "cuisine"] },
+];
+function applyKeywordOverride(baseCategory, title, description) {
+  const text = `${title || ""} ${description || ""}`.toLowerCase();
+  for (const rule of KEYWORD_OVERRIDES) {
+    if (rule.words.some(w => text.includes(w))) return rule.cat;
+  }
+  return baseCategory;
+}
+
 function extractCoords(record) {
   const geo = firstNonEmpty(record.location_coordinates, record.location, record.geo, record.coordinates);
   if (geo && typeof geo.lat === "number") return { lat: geo.lat, lng: geo.lon ?? geo.lng };
@@ -110,7 +130,7 @@ function upsertEvent(db, record, venueId) {
   `).run(
     String(title),
     String(desc).replace(/<[^>]+>/g, "").slice(0, 1000), // on retire le HTML éventuel
-    mapCategory(record),
+    applyKeywordOverride(mapCategory(record), title, desc),
     venueId,
     String(dateStart).slice(0, 10),
     String(dateEnd).slice(0, 10),

@@ -42,6 +42,27 @@ function mapCategory(qfapTags) {
   return "insolite";
 }
 
+// Certaines de nos catégories (mode, love, pop-up, cinéma, bien-être,
+// gastronomie, famille) n'ont pas d'équivalent direct dans les tags de
+// "Que faire à Paris" — on les retrouve en examinant le titre/résumé,
+// plutôt que de les laisser systématiquement finir en "insolite".
+const KEYWORD_OVERRIDES = [
+  { cat: "cinema", words: ["cinéma", "cinema", "ciné-concert", "projection", "film en plein air"] },
+  { cat: "mode", words: ["mode", "fashion", "défilé", "créateurs de mode"] },
+  { cat: "love", words: ["speed dating", "célibataire", "rencontre amoureuse", "soirée coquine"] },
+  { cat: "popup", words: ["pop-up", "vide-dressing", "vide dressing", "marché aux puces", "brocante"] },
+  { cat: "bienetre", words: ["yoga", "méditation", "bien-être", "bien etre", "sophrologie"] },
+  { cat: "famille", words: ["famille", "jeune public", "enfants", "kids"] },
+  { cat: "gastronomie", words: ["dégustation", "marché gourmand", "food festival", "gastronomie", "vin", "cuisine"] },
+];
+function applyKeywordOverride(baseCategory, title, description) {
+  const text = `${title || ""} ${description || ""}`.toLowerCase();
+  for (const rule of KEYWORD_OVERRIDES) {
+    if (rule.words.some(w => text.includes(w))) return rule.cat;
+  }
+  return baseCategory;
+}
+
 // Extrait un prix min/max à partir du texte libre "price_detail" (ex.
 // "De 0€ à 12€", "15€", "Entre 8€ et 20€") — on ne devine jamais un prix
 // qui ne serait pas écrit noir sur blanc dans la donnée source.
@@ -103,7 +124,7 @@ function upsertEvent(db, record, venueId) {
   `).run(
     record.title || "Événement à Paris",
     record.lead_text || "",
-    mapCategory(record.qfap_tags),
+    applyKeywordOverride(mapCategory(record.qfap_tags), record.title, record.lead_text),
     venueId,
     dateStart,
     dateEnd,
